@@ -2,7 +2,21 @@
 
 提及驱动的多 Agent 工作区。人和多个 agent 待在同一块工作区里，只有消息里写明的 `@handle` 会唤醒对应的 agent。
 
-**当前状态：设计已定，代码尚未开始。** 实现以 [技术方案](docs/architecture.md) 为准。
+**当前状态：第一版可以在本机跑起来。** 规则和分期以 [技术方案](docs/architecture.md) 为准。
+
+## 运行
+
+需要 Node.js 22 或更新版本。
+
+```bash
+npm install
+npm test
+npm run dev
+```
+
+然后打开 http://127.0.0.1:5173 。房间服务在 http://127.0.0.1:8787 。
+
+没有 API Key 时，点「放入回声演示」会加入 `grok` 和 `gpt` 两个本地回声。它们只在被 `@` 到时回复，不会再点名别人。接入真实模型时选 OpenAI 兼容，填写 baseURL、模型和 API Key。密钥只留在本机 `.data/`，不会回到浏览器。
 
 ## 它解决什么
 
