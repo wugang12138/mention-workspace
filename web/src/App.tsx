@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import type { AdapterKind, PublicAgent, PublicMessage, PublicWakeup, RoomState, ServerEvent, WakeStatus } from "@shared"
-import { cancelWakeup, createAgent, createDemoPair, loadState, openEvents, postMessage, removeAgent, saveRoom } from "./api"
+import { activateRoom, cancelWakeup, createAgent, createDemoPair, createRoom, loadState, openEvents, postMessage, removeAgent, saveRoom } from "./api"
 
 const WAKE_LABEL: Record<WakeStatus, string> = {
   queued: "排队",
@@ -191,6 +191,24 @@ export function App() {
           <p className="eyebrow">Mention Workspace</p>
           <h1>工作区</h1>
         </header>
+        <RoomBar
+          roomId={state.room.id}
+          rooms={state.rooms}
+          onSwitch={async (id) => {
+            const next = await activateRoom(id)
+            skipSave.current = true
+            setGoal(next.room.goal)
+            setScratchpad(next.room.scratchpad)
+            setState(next)
+          }}
+          onCreate={async (name) => {
+            const next = await createRoom(name)
+            skipSave.current = true
+            setGoal(next.room.goal)
+            setScratchpad(next.room.scratchpad)
+            setState(next)
+          }}
+        />
         <div className="rail-actions">
           <button type="button" className="primary" onClick={() => setFormOpen((open) => !open)}>
             {formOpen ? "收起接入" : "接入 agent"}
@@ -214,7 +232,7 @@ export function App() {
                   </div>
                 </div>
                 <p className="meta">
-                  {agent.adapterKind === "echo" ? "本地回声" : agent.model || "OpenAI 兼容"}
+                  {adapterLabel(agent)}
                   {" · "}
                   {STATUS_LABEL[agent.runtimeStatus]}
                   {agent.fingerprint ? ` · 密钥 ${agent.fingerprint}` : ""}
@@ -334,6 +352,19 @@ export function App() {
           <textarea id="scratchpad" value={scratchpad} onChange={(event) => setScratchpad(event.target.value)} rows={8} />
         </section>
         <section>
+          <h2>产物</h2>
+          {state.artifacts.length === 0 ? (
+            <p className="meta">回复里用 ```file 相对路径 交出文件后，会出现在这里。</p>
+          ) : (
+            state.artifacts.map((artifact) => (
+              <details key={artifact.path}>
+                <summary>{artifact.path}</summary>
+                <pre>{artifact.content}</pre>
+              </details>
+            ))
+          )}
+        </section>
+        <section>
           <h2>本轮链路</h2>
           {chain.length === 0 ? <p className="meta">还没有人被点名。</p> : <ChainList chain={chain} />}
         </section>
@@ -399,6 +430,12 @@ type AgentForm = {
   model?: string
   apiKey?: string
   systemPrompt?: string
+  command?: string
+  args?: string
+  cwd?: string
+  endpoint?: string
+  cardUrl?: string
+  mcpUrl?: string
 }
 
 function AgentForm({
@@ -416,14 +453,21 @@ function AgentForm({
   const [baseURL, setBaseURL] = useState("")
   const [model, setModel] = useState("")
   const [apiKey, setApiKey] = useState("")
+  const [command, setCommand] = useState("")
+  const [args, setArgs] = useState("")
+  const [cwd, setCwd] = useState("")
+  const [endpoint, setEndpoint] = useState("")
+  const [cardUrl, setCardUrl] = useState("")
+  const [mcpUrl, setMcpUrl] = useState("")
   const [systemPrompt, setSystemPrompt] = useState("")
+  const usesModel = adapterKind === "openai_compat" || adapterKind === "anthropic" || adapterKind === "gemini"
 
   return (
     <form
       className="join"
       onSubmit={(event) => {
         event.preventDefault()
-        void onSubmit({ handle, displayName, adapterKind, baseURL, model, apiKey, systemPrompt })
+        void onSubmit({ handle, displayName, adapterKind, baseURL, model, apiKey, systemPrompt, command, args, cwd, endpoint, cardUrl, mcpUrl })
       }}
     >
       <label htmlFor="adapter-kind">接入方式</label>
@@ -433,20 +477,57 @@ function AgentForm({
         onChange={(event) => setAdapterKind(event.target.value as AdapterKind)}
       >
         <option value="openai_compat">OpenAI 兼容 API Key</option>
+        <option value="anthropic">Anthropic API Key</option>
+        <option value="gemini">Gemini API Key</option>
+        <option value="process">本地进程</option>
+        <option value="http">HTTP bot</option>
+        <option value="a2a">A2A Agent Card</option>
         <option value="echo">本地回声</option>
       </select>
       <label htmlFor="display-name">名字</label>
       <input id="display-name" value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
       <label htmlFor="handle">handle</label>
       <input id="handle" value={handle} onChange={(event) => setHandle(event.target.value)} placeholder="grok" />
-      {adapterKind === "openai_compat" ? (
+      {usesModel ? (
         <>
           <label htmlFor="base-url">baseURL</label>
-          <input id="base-url" value={baseURL} onChange={(event) => setBaseURL(event.target.value)} placeholder="https://api.openai.com/v1" />
+          <input id="base-url" value={baseURL} onChange={(event) => setBaseURL(event.target.value)} placeholder={adapterKind === "openai_compat" ? "https://api.openai.com/v1" : "可留空，使用官方地址"} />
           <label htmlFor="model">模型</label>
           <input id="model" value={model} onChange={(event) => setModel(event.target.value)} />
           <label htmlFor="api-key">API Key</label>
           <input id="api-key" type="password" value={apiKey} autoComplete="off" onChange={(event) => setApiKey(event.target.value)} />
+        </>
+      ) : null}
+      {adapterKind === "process" ? (
+        <>
+          <label htmlFor="command">命令</label>
+          <input id="command" value={command} onChange={(event) => setCommand(event.target.value)} placeholder="node" />
+          <label htmlFor="args">参数</label>
+          <input id="args" value={args} onChange={(event) => setArgs(event.target.value)} />
+          <label htmlFor="cwd">工作目录</label>
+          <input id="cwd" value={cwd} onChange={(event) => setCwd(event.target.value)} />
+        </>
+      ) : null}
+      {adapterKind === "http" ? (
+        <>
+          <label htmlFor="endpoint">地址</label>
+          <input id="endpoint" value={endpoint} onChange={(event) => setEndpoint(event.target.value)} placeholder="http://127.0.0.1:9000/agent" />
+          <label htmlFor="api-key">Bearer Token</label>
+          <input id="api-key" type="password" value={apiKey} autoComplete="off" onChange={(event) => setApiKey(event.target.value)} />
+        </>
+      ) : null}
+      {adapterKind === "a2a" ? (
+        <>
+          <label htmlFor="card-url">Agent Card</label>
+          <input id="card-url" value={cardUrl} onChange={(event) => setCardUrl(event.target.value)} />
+          <label htmlFor="api-key">Bearer Token</label>
+          <input id="api-key" type="password" value={apiKey} autoComplete="off" onChange={(event) => setApiKey(event.target.value)} />
+        </>
+      ) : null}
+      {adapterKind !== "echo" ? (
+        <>
+          <label htmlFor="mcp-url">MCP 工具地址</label>
+          <input id="mcp-url" value={mcpUrl} onChange={(event) => setMcpUrl(event.target.value)} placeholder="可留空" />
         </>
       ) : null}
       <label htmlFor="system-prompt">系统提示</label>
@@ -459,8 +540,54 @@ function AgentForm({
   )
 }
 
+function RoomBar({
+  roomId,
+  rooms,
+  onSwitch,
+  onCreate
+}: {
+  roomId: string
+  rooms: RoomState["rooms"]
+  onSwitch: (id: string) => Promise<void>
+  onCreate: (name: string) => Promise<void>
+}) {
+  const [name, setName] = useState("")
+  return (
+    <form
+      className="join"
+      onSubmit={(event) => {
+        event.preventDefault()
+        const next = name.trim()
+        if (!next) return
+        setName("")
+        void onCreate(next)
+      }}
+    >
+      <label htmlFor="room-switch">房间</label>
+      <select id="room-switch" value={roomId} onChange={(event) => void onSwitch(event.target.value)}>
+        {rooms.map((room) => (
+          <option key={room.id} value={room.id}>
+            {room.name}
+          </option>
+        ))}
+      </select>
+      <label htmlFor="room-name">新房间</label>
+      <input id="room-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="房间名" />
+      <button type="submit">新建房间</button>
+    </form>
+  )
+}
+
+function adapterLabel(agent: PublicAgent): string {
+  if (agent.adapterKind === "echo") return "本地回声"
+  if (agent.adapterKind === "process") return agent.command || "本地进程"
+  if (agent.adapterKind === "http") return "HTTP"
+  if (agent.adapterKind === "a2a") return "A2A"
+  return agent.model || agent.adapterKind
+}
+
 function applyEvent(current: RoomState | null, event: ServerEvent): RoomState | null {
-  if (!current) return current
+  if (!current || event.roomId !== current.room.id) return current
   switch (event.type) {
     case "message.created":
       if (current.messages.some((message) => message.id === event.message.id)) return current
@@ -493,6 +620,10 @@ function applyEvent(current: RoomState | null, event: ServerEvent): RoomState | 
     }
     case "room.updated":
       return { ...current, room: event.room }
+    case "artifact.created": {
+      const artifacts = current.artifacts.filter((item) => item.path !== event.artifact.path)
+      return { ...current, artifacts: [...artifacts, event.artifact] }
+    }
     default:
       return current
   }

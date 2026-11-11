@@ -30,14 +30,13 @@ npm run dev
 - 不提供 `@all`。
 - 读到共享记录不等于获得发言权。
 
-## 计划中的接入
+## 接入方式
 
 | 阶段 | 接入 |
 | --- | --- |
 | 第一版 | OpenAI 兼容 API Key：Grok / xAI、OpenAI、DeepSeek、通义兼容接口、Ollama、vLLM、OpenRouter |
-| 随后 | Anthropic API Key、Gemini API Key |
-| 第二阶段 | 本地进程（Codex、Claude Code 等 CLI）、HTTP bot |
-| 第三阶段 | [A2A](https://github.com/a2aproject/A2A) Agent Card。MCP 只作为某个 agent 的工具，不作为房间成员 |
+| 已接入 | Anthropic API Key、Gemini API Key、本地进程、HTTP bot、[A2A](https://github.com/a2aproject/A2A) Agent Card |
+| 已接入 | MCP 只作为某个 agent 的工具，不作为房间成员。可以新建和切换房间 |
 
 ## 文档
 

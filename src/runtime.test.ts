@@ -91,6 +91,77 @@ describe("runtime", () => {
     expect(state.messages.some((message) => message.text.includes("第 4 跳"))).toBe(true)
   })
 
+  it("keeps an explicit file and does not follow mentions inside it", async () => {
+    const { runtime, calls } = setup(() => "```file notes/a.txt\nhello\n@gpt\n```")
+    await handles(runtime)
+    runtime.postHumanMessage("@grok 交一个文件")
+    await runtime.whenIdle()
+    expect(calls).toEqual(["grok"])
+    expect(runtime.getState().artifacts).toEqual([expect.objectContaining({ path: "notes/a.txt", content: "hello\n@gpt" })])
+  })
+
+  it("does not wake agents that live in another room", async () => {
+    const { runtime, calls } = setup(() => "不该跨房间")
+    await handles(runtime)
+    const first = runtime.getState().room.id
+    runtime.createRoom("第二个")
+    runtime.postHumanMessage("@grok 在吗")
+    await runtime.whenIdle()
+    expect(calls).toEqual([])
+    expect(runtime.getState().messages.some((message) => message.text.includes("没有点名"))).toBe(true)
+    runtime.switchRoom(first)
+    expect(runtime.getState().agents.map((agent) => agent.handle).sort()).toEqual(["gpt", "grok"])
+  })
+
+  it("runs a local process only when mentioned", async () => {
+    const { runtime } = setup()
+    await runtime.createAgent({
+      handle: "shell",
+      displayName: "Shell",
+      adapterKind: "process",
+      command: process.execPath,
+      args: `-e "process.stdin.resume(); process.stdin.on('end', () => process.stdout.write('ran'))"`
+    })
+    runtime.postHumanMessage("先别跑")
+    await runtime.whenIdle()
+    expect(runtime.getState().messages.some((message) => message.text === "ran")).toBe(false)
+    runtime.postHumanMessage("@shell 跑一下")
+    await runtime.whenIdle()
+    expect(runtime.getState().messages.some((message) => message.text === "ran")).toBe(true)
+  })
+
+  it("calls an HTTP bot only when mentioned and hides its token", async () => {
+    const { runtime } = setup()
+    const original = globalThis.fetch
+    globalThis.fetch = async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { probe?: boolean }
+      if (body.probe) return new Response("{}", { status: 200 })
+      return new Response(JSON.stringify({ text: "来自 bot" }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      })
+    }
+    try {
+      await runtime.createAgent({
+        handle: "bot",
+        displayName: "Bot",
+        adapterKind: "http",
+        endpoint: "https://bot.test/agent",
+        apiKey: "sk-http-token"
+      })
+      runtime.postHumanMessage("先别叫")
+      await runtime.whenIdle()
+      expect(runtime.getState().messages.some((message) => message.text === "来自 bot")).toBe(false)
+      runtime.postHumanMessage("@bot 说一句")
+      await runtime.whenIdle()
+    } finally {
+      globalThis.fetch = original
+    }
+    const state = runtime.getState()
+    expect(state.messages.some((message) => message.text === "来自 bot")).toBe(true)
+    expect(JSON.stringify(state)).not.toContain("sk-http-token")
+  })
+
   it("does not expand @all", async () => {
     const { runtime, calls } = setup(() => "全体回复")
     await handles(runtime)

@@ -1,5 +1,5 @@
 import { DatabaseSync } from "node:sqlite"
-import type { AdapterKind, AuthorKind, PublicAgent, PublicMessage, PublicRoom, PublicWakeup, RuntimeStatus, WakeStatus } from "./shared"
+import type { AdapterKind, AuthorKind, PublicAgent, PublicArtifact, PublicMessage, PublicRoom, PublicWakeup, RoomSummary, RuntimeStatus, WakeStatus } from "./shared"
 
 export type RoomRow = {
   id: string
@@ -115,6 +115,10 @@ create table if not exists artifacts (
   content text not null,
   created_at text not null
 );
+create table if not exists settings (
+  key text primary key,
+  value text not null
+);
 `
 
 export function openDatabase(path: string): DatabaseSync {
@@ -145,18 +149,43 @@ export function ensureRoom(db: DatabaseSync): RoomRow {
   return row
 }
 
-export function getRoom(db: DatabaseSync): RoomRow {
-  const row = db.prepare("select * from rooms limit 1").get() as RoomRow | undefined
-  if (!row) throw new Error("room missing")
-  return row
+export function listRooms(db: DatabaseSync): RoomRow[] {
+  return db.prepare("select * from rooms order by rowid").all() as unknown as RoomRow[]
 }
 
-export function updateRoom(db: DatabaseSync, patch: { goal?: string; scratchpad?: string }): RoomRow {
-  const room = getRoom(db)
-  const goal = patch.goal ?? room.goal
-  const scratchpad = patch.scratchpad ?? room.scratchpad
-  db.prepare("update rooms set goal = ?, scratchpad = ? where id = ?").run(goal, scratchpad, room.id)
-  return getRoom(db)
+export function getRoomById(db: DatabaseSync, id: string): RoomRow | undefined {
+  return db.prepare("select * from rooms where id = ?").get(id) as RoomRow | undefined
+}
+
+export function insertRoom(db: DatabaseSync, row: RoomRow): void {
+  db.prepare("insert into rooms (id, name, goal, scratchpad, created_at) values (?, ?, ?, ?, ?)").run(
+    row.id,
+    row.name,
+    row.goal,
+    row.scratchpad,
+    row.created_at
+  )
+}
+
+export function updateRoomById(db: DatabaseSync, id: string, patch: { name?: string; goal?: string; scratchpad?: string }): RoomRow {
+  const room = getRoomById(db, id)
+  if (!room) throw new Error("room missing")
+  const next = {
+    name: patch.name ?? room.name,
+    goal: patch.goal ?? room.goal,
+    scratchpad: patch.scratchpad ?? room.scratchpad
+  }
+  db.prepare("update rooms set name = ?, goal = ?, scratchpad = ? where id = ?").run(next.name, next.goal, next.scratchpad, id)
+  return getRoomById(db, id) as RoomRow
+}
+
+export function readSetting(db: DatabaseSync, key: string): string | undefined {
+  const row = db.prepare("select value from settings where key = ?").get(key) as { value: string } | undefined
+  return row?.value
+}
+
+export function writeSetting(db: DatabaseSync, key: string, value: string): void {
+  db.prepare("insert into settings (key, value) values (?, ?) on conflict(key) do update set value = excluded.value").run(key, value)
 }
 
 export function listAgents(db: DatabaseSync, roomId: string): AgentRow[] {
@@ -274,13 +303,65 @@ export function listWakeups(db: DatabaseSync, roomId: string): WakeupRow[] {
   return db.prepare("select * from wakeups where room_id = ? order by rowid").all(roomId) as unknown as WakeupRow[]
 }
 
-export function agentConfig(row: AgentRow): { baseURL: string; model: string } {
-  const parsed = JSON.parse(row.config_json) as { baseURL?: string; model?: string }
-  return { baseURL: parsed.baseURL ?? "", model: parsed.model ?? "" }
+export type StoredConfig = {
+  baseURL: string
+  model: string
+  command: string
+  args: string[]
+  cwd: string
+  endpoint: string
+  cardUrl: string
+  mcpUrl: string
+}
+
+export type ArtifactRow = {
+  id: string
+  room_id: string
+  message_id: string
+  path: string
+  content: string
+  created_at: string
+}
+
+export function agentConfig(row: AgentRow): StoredConfig {
+  const parsed = JSON.parse(row.config_json) as Partial<StoredConfig>
+  return {
+    baseURL: parsed.baseURL ?? "",
+    model: parsed.model ?? "",
+    command: parsed.command ?? "",
+    args: Array.isArray(parsed.args) ? parsed.args.map(String) : [],
+    cwd: parsed.cwd ?? "",
+    endpoint: parsed.endpoint ?? "",
+    cardUrl: parsed.cardUrl ?? "",
+    mcpUrl: parsed.mcpUrl ?? ""
+  }
+}
+
+export function insertArtifact(db: DatabaseSync, row: ArtifactRow): void {
+  db.prepare("insert into artifacts (id, room_id, message_id, path, content, created_at) values (?, ?, ?, ?, ?, ?)").run(
+    row.id,
+    row.room_id,
+    row.message_id,
+    row.path,
+    row.content,
+    row.created_at
+  )
+}
+
+export function listArtifacts(db: DatabaseSync, roomId: string): ArtifactRow[] {
+  return db.prepare("select * from artifacts where room_id = ? order by rowid").all(roomId) as unknown as ArtifactRow[]
 }
 
 export function toPublicRoom(row: RoomRow): PublicRoom {
   return { id: row.id, name: row.name, goal: row.goal, scratchpad: row.scratchpad }
+}
+
+export function toRoomSummary(row: RoomRow): RoomSummary {
+  return { id: row.id, name: row.name }
+}
+
+export function toPublicArtifact(row: ArtifactRow): PublicArtifact {
+  return { id: row.id, messageId: row.message_id, path: row.path, content: row.content, createdAt: row.created_at }
 }
 
 export function toPublicAgent(row: AgentRow, fingerprint: string): PublicAgent {
@@ -292,6 +373,12 @@ export function toPublicAgent(row: AgentRow, fingerprint: string): PublicAgent {
     adapterKind: row.adapter_kind,
     model: config.model,
     baseURL: config.baseURL,
+    command: config.command,
+    args: config.args.join(" "),
+    cwd: config.cwd,
+    endpoint: config.endpoint,
+    cardUrl: config.cardUrl,
+    mcpUrl: config.mcpUrl,
     hasSecret: Boolean(row.secret_id),
     fingerprint,
     systemPrompt: row.system_prompt,

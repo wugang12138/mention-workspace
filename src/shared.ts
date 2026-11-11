@@ -1,5 +1,5 @@
 export type AuthorKind = "human" | "agent" | "system"
-export type AdapterKind = "openai_compat" | "echo"
+export type AdapterKind = "openai_compat" | "anthropic" | "gemini" | "process" | "http" | "a2a" | "echo"
 export type RuntimeStatus = "idle" | "running" | "failed" | "unavailable"
 export type WakeStatus = "queued" | "running" | "done" | "failed" | "cancelled" | "skipped"
 export type ProbeResult = "ok" | "unauthorized" | "unreachable"
@@ -18,10 +18,29 @@ export type PublicAgent = {
   adapterKind: AdapterKind
   model: string
   baseURL: string
+  command: string
+  args: string
+  cwd: string
+  endpoint: string
+  cardUrl: string
+  mcpUrl: string
   hasSecret: boolean
   fingerprint: string
   systemPrompt: string
   runtimeStatus: RuntimeStatus
+}
+
+export type PublicArtifact = {
+  id: string
+  messageId: string
+  path: string
+  content: string
+  createdAt: string
+}
+
+export type RoomSummary = {
+  id: string
+  name: string
 }
 
 export type PublicMessage = {
@@ -57,19 +76,22 @@ export type PublicDraft = {
 
 export type RoomState = {
   room: PublicRoom
+  rooms: RoomSummary[]
   agents: PublicAgent[]
   messages: PublicMessage[]
   wakeups: PublicWakeup[]
   drafts: PublicDraft[]
+  artifacts: PublicArtifact[]
 }
 
 export type ServerEvent =
-  | { type: "message.created"; message: PublicMessage }
-  | { type: "wakeup.upsert"; wakeup: PublicWakeup }
-  | { type: "wakeup.delta"; wakeupId: string; text: string }
-  | { type: "wakeup.finished"; wakeup: PublicWakeup; message: PublicMessage | null }
-  | { type: "agent.updated"; agent: PublicAgent }
-  | { type: "room.updated"; room: PublicRoom }
+  | { type: "message.created"; roomId: string; message: PublicMessage }
+  | { type: "wakeup.upsert"; roomId: string; wakeup: PublicWakeup }
+  | { type: "wakeup.delta"; roomId: string; wakeupId: string; text: string }
+  | { type: "wakeup.finished"; roomId: string; wakeup: PublicWakeup; message: PublicMessage | null }
+  | { type: "agent.updated"; roomId: string; agent: PublicAgent }
+  | { type: "room.updated"; roomId: string; room: PublicRoom }
+  | { type: "artifact.created"; roomId: string; artifact: PublicArtifact }
 
 export const MAX_HOP = 4
 export const RESERVED_HANDLES = ["human", "all", "system", "me"] as const

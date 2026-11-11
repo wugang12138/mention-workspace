@@ -40,6 +40,13 @@ export function createApp(runtime: Runtime) {
     return c.json({ result })
   })
 
+  app.post("/api/rooms", async (c) => {
+    const body = await c.req.json<{ name?: string }>()
+    return c.json(runtime.createRoom(body.name ?? ""), 201)
+  })
+
+  app.post("/api/rooms/:id/activate", (c) => c.json(runtime.switchRoom(c.req.param("id"))))
+
   app.post("/api/demo-pair", async (c) => c.json(await runtime.createDemoPair()))
 
   app.post("/api/messages", async (c) => {

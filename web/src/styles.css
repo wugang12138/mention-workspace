@@ -160,6 +160,9 @@ h2 { margin: 0 0 0.6rem; font-size: 1rem; }
 .mention-menu button { width: 100%; text-align: left; border: 0; background: transparent; }
 .mention-menu button.selected, .mention-menu button:hover { background: oklch(0.96 0.01 353); }
 
+details { margin: 0 0 0.55rem; }
+details pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0.35rem 0 0; font: inherit; }
+
 .chain { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.55rem; }
 .chain li { display: flex; flex-direction: column; gap: 0.1rem; font-size: 0.875rem; }
 .chain li span:last-child { color: var(--muted); }

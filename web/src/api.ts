@@ -33,11 +33,17 @@ export function saveRoom(patch: { goal?: string; scratchpad?: string }) {
 export function createAgent(input: {
   handle: string
   displayName: string
-  adapterKind: "openai_compat" | "echo"
+  adapterKind: PublicAgent["adapterKind"]
   baseURL?: string
   model?: string
   apiKey?: string
   systemPrompt?: string
+  command?: string
+  args?: string
+  cwd?: string
+  endpoint?: string
+  cardUrl?: string
+  mcpUrl?: string
 }) {
   return request<PublicAgent>("/api/agents", { method: "POST", body: JSON.stringify(input) })
 }
@@ -48,6 +54,14 @@ export function removeAgent(id: string) {
 
 export function probeAgent(id: string) {
   return request<{ result: ProbeResult }>(`/api/agents/${id}/probe`, { method: "POST" })
+}
+
+export function createRoom(name: string) {
+  return request<RoomState>("/api/rooms", { method: "POST", body: JSON.stringify({ name }) })
+}
+
+export function activateRoom(id: string) {
+  return request<RoomState>(`/api/rooms/${id}/activate`, { method: "POST" })
 }
 
 export function createDemoPair() {

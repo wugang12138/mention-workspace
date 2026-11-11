@@ -269,3 +269,7 @@ SQLite，单机文件。第一版一张房间记录即可，表结构仍按 `roo
 - 共享备忘存在 `rooms.scratchpad`。
 - 房间服务默认 `127.0.0.1:8787`，界面开发服务器默认 `127.0.0.1:5173`，由 Vite 把 `/api` 代理到房间服务。
 - 密钥用本机 `.data/master.key` 做 AES-256-GCM 加密后写入 SQLite。`.data/` 不进仓库。
+- 第二阶段起支持 Anthropic、Gemini、本地进程、HTTP bot。进程不经过 shell，参数按空白和引号拆开。
+- 第三阶段支持 A2A Agent Card 的 `message/send`，以及把一个 MCP HTTP 地址挂到模型 agent 上做工具调用。
+- 回复里的 ` ```file 相对路径 ` 围栏会写入产物，路径不允许 `..`。
+- 可以新建和切换房间。点名只叫醒当前房间里的 agent。

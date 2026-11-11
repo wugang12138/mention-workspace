@@ -1,4 +1,7 @@
 import type { AuthorKind, ProbeResult } from "./shared"
+import { workspaceSystemPrompt } from "./prompt"
+import type { ToolCatalog } from "./tools"
+import { forEachSseData } from "./sse"
 
 export type ChatMessage = {
   role: "system" | "user" | "assistant"
@@ -28,21 +31,7 @@ export function normalizeBaseURL(input: string): string {
 }
 
 export function buildChatMessages(turn: TurnInput): ChatMessage[] {
-  const system = [
-    turn.systemPrompt.trim() || `你是 ${turn.handle}。`,
-    turn.roomGoal.trim() ? `房间目标：${turn.roomGoal.trim()}` : "",
-    turn.scratchpad.trim() ? `共享备忘：\n${turn.scratchpad.trim()}` : "",
-    [
-      "你只有在被 @ 到时才会被调用。",
-      "需要其他成员继续时，在回复正文里写 @handle。",
-      "不需要别人时不要写 @。",
-      "不要写 @all。代码块和 <thinking> 里的 @ 不会叫醒任何人。",
-      "把事情交还给人时写 @human。",
-      `你被 ${turn.triggerAuthor} 点名。请只回复这件事。`
-    ].join("")
-  ]
-    .filter(Boolean)
-    .join("\n\n")
+  const system = workspaceSystemPrompt(turn)
 
   const messages: ChatMessage[] = [{ role: "system", content: system }]
   for (const item of turn.history.slice(-30)) {
@@ -95,7 +84,41 @@ export async function probeOpenAI(input: {
   }
 }
 
-export async function* completeOpenAI(turn: TurnInput, fetchImpl: typeof fetch = fetch): AsyncGenerator<string> {
+type ToolCall = { id: string; name: string; arguments: string }
+
+export async function* completeOpenAI(turn: TurnInput, fetchImpl: typeof fetch = fetch, catalog?: ToolCatalog): AsyncGenerator<string> {
+  const messages: Array<ChatMessage | { role: "tool"; tool_call_id: string; content: string }> = buildChatMessages(turn)
+  for (let round = 0; round < 4; round += 1) {
+    const queue = createTextQueue()
+    const stepPromise = streamOpenAI(turn, messages, fetchImpl, catalog, (chunk) => queue.push(chunk)).finally(() => queue.finish())
+    for await (const chunk of queue.iterate()) yield chunk
+    const step = await stepPromise
+    if (!catalog || step.toolCalls.length === 0) return
+    messages.push({
+      role: "assistant",
+      content: step.text,
+      tool_calls: step.toolCalls.map((call) => ({ id: call.id, type: "function", function: { name: call.name, arguments: call.arguments } }))
+    } as ChatMessage)
+    for (const call of step.toolCalls) {
+      let args: unknown = {}
+      try {
+        args = call.arguments ? JSON.parse(call.arguments) : {}
+      } catch {
+        args = {}
+      }
+      const result = await catalog.call(call.name, args, turn.signal)
+      messages.push({ role: "tool", tool_call_id: call.id, content: result })
+    }
+  }
+}
+
+async function streamOpenAI(
+  turn: TurnInput,
+  messages: unknown[],
+  fetchImpl: typeof fetch,
+  catalog: ToolCatalog | undefined,
+  onText: (chunk: string) => void
+): Promise<{ text: string; toolCalls: ToolCall[] }> {
   const root = normalizeBaseURL(turn.baseURL)
   const response = await fetchImpl(`${root}/chat/completions`, {
     method: "POST",
@@ -106,63 +129,84 @@ export async function* completeOpenAI(turn: TurnInput, fetchImpl: typeof fetch =
     body: JSON.stringify({
       model: turn.model,
       stream: true,
-      messages: buildChatMessages(turn)
+      messages,
+      tools: catalog?.definitions.map((tool) => ({
+        type: "function",
+        function: { name: tool.name, description: tool.description, parameters: tool.parameters }
+      }))
     }),
     signal: turn.signal
   })
-
-  if (response.status === 401 || response.status === 403) {
-    throw Object.assign(new Error("API Key 未被接受"), { probe: "unauthorized" })
-  }
-  if (!response.ok) {
-    throw Object.assign(new Error(`模型接口返回 ${response.status}`), { probe: "unreachable" })
-  }
-  if (!response.body) throw Object.assign(new Error("模型接口没有返回内容"), { probe: "unreachable" })
-
+  if (response.status === 401 || response.status === 403) throw new Error("API Key 未被接受")
+  if (!response.ok || !response.body) throw new Error(`模型接口返回 ${response.status}`)
   const contentType = response.headers.get("content-type") ?? ""
   if (contentType.includes("application/json")) {
-    const json = (await response.json()) as { choices?: { message?: { content?: string } }[] }
-    const text = json.choices?.[0]?.message?.content ?? ""
-    if (text) yield text
-    return
+    const json = (await response.json()) as { choices?: { message?: { content?: string; tool_calls?: { id?: string; function?: { name?: string; arguments?: string } }[] } }[] }
+    const message = json.choices?.[0]?.message
+    if (message?.content) onText(message.content)
+    return {
+      text: message?.content ?? "",
+      toolCalls: (message?.tool_calls ?? []).map((call) => ({
+        id: call.id ?? crypto.randomUUID(),
+        name: call.function?.name ?? "",
+        arguments: call.function?.arguments ?? ""
+      }))
+    }
   }
-
-  yield* readContentStream(response.body)
+  let text = ""
+  const toolCalls: ToolCall[] = []
+  await forEachSseData(response.body, (data) => {
+    const json = JSON.parse(data) as {
+      choices?: { delta?: { content?: string; tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string } }[] } }[]
+    }
+    const delta = json.choices?.[0]?.delta
+    if (delta?.content) {
+      text += delta.content
+      onText(delta.content)
+    }
+    for (const call of delta?.tool_calls ?? []) {
+      const index = call.index ?? 0
+      const current = toolCalls[index] ?? { id: "", name: "", arguments: "" }
+      if (call.id) current.id = call.id
+      if (call.function?.name) current.name += call.function.name
+      if (call.function?.arguments) current.arguments += call.function.arguments
+      toolCalls[index] = current
+    }
+  })
+  return { text, toolCalls: toolCalls.filter((call) => call.name) }
 }
 
-async function* readContentStream(stream: ReadableStream<Uint8Array>): AsyncGenerator<string> {
-  const reader = stream.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ""
-  try {
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n")
-      let newline = buffer.indexOf("\n")
-      while (newline >= 0) {
-        const line = buffer.slice(0, newline)
-        buffer = buffer.slice(newline + 1)
-        const piece = contentFromSseLine(line)
-        if (piece === null) return
-        if (piece) yield piece
-        newline = buffer.indexOf("\n")
+function createTextQueue() {
+  const items: string[] = []
+  let finished = false
+  let waiter: (() => void) | null = null
+  const wake = () => {
+    waiter?.()
+    waiter = null
+  }
+  return {
+    push(text: string) {
+      if (!text) return
+      items.push(text)
+      wake()
+    },
+    finish() {
+      finished = true
+      wake()
+    },
+    async *iterate() {
+      while (true) {
+        const next = items.shift()
+        if (next !== undefined) {
+          yield next
+          continue
+        }
+        if (finished) return
+        await new Promise<void>((resolve) => {
+          waiter = resolve
+        })
       }
     }
-  } finally {
-    reader.releaseLock()
   }
 }
 
-function contentFromSseLine(line: string): string | null | undefined {
-  const trimmed = line.trim()
-  if (!trimmed.startsWith("data:")) return undefined
-  const data = trimmed.slice(5).trim()
-  if (data === "[DONE]") return null
-  try {
-    const json = JSON.parse(data) as { choices?: { delta?: { content?: string } }[] }
-    return json.choices?.[0]?.delta?.content ?? ""
-  } catch {
-    return undefined
-  }
-}
