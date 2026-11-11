@@ -246,7 +246,7 @@ export function createRuntime(db: DatabaseSync, options: RuntimeOptions) {
     if (queued > 0 || parsed.addressedHuman) return
     if (parsed.hasAll && parsed.actionable.length === 0 && parsed.ignored.length === 0) return
     if (parsed.actionable.length === 0 && parsed.ignored.length === 0) {
-      systemNote(scope, "没有点名，没有 agent 被叫醒。")
+      systemNote(scope, "没有点名，没有人回复。")
       return
     }
     if (parsed.actionable.length === 0 && parsed.ignored.length > 0) {
@@ -262,7 +262,7 @@ export function createRuntime(db: DatabaseSync, options: RuntimeOptions) {
         const catalog = await catalogFor(config, turn.signal)
         if (agent.adapter_kind === "echo") {
           const from = turn.triggerAuthor === "human" ? "你" : turn.triggerAuthor
-          const text = `收到。我是 ${turn.handle}，这条回复只因为被 ${from} 点名。`
+          const text = `收到。我是 ${turn.handle}，这条回复只因为被${from}点名。`
           for (let index = 0; index < text.length; index += 12) {
             if (turn.signal.aborted) throw turn.signal.reason ?? new DOMException("已停止", "AbortError")
             yield text.slice(index, index + 12)

@@ -87,7 +87,8 @@ export function openEvents(onEvent: (event: ServerEvent) => void) {
     "wakeup.delta",
     "wakeup.finished",
     "agent.updated",
-    "room.updated"
+    "room.updated",
+    "artifact.created"
   ]
   for (const type of types) {
     source.addEventListener(type, (event) => {

@@ -1,275 +1,250 @@
-# Mention Workspace 技术方案
+# Mention Workspace architecture
 
-状态：已定稿，作为第一版实现依据。  
-日期：2026-11-11。  
-范围：单机、单房间的可演示工作区。代码尚未开始。
+Status: partial demo. This document describes the browser demo that is in the repository now.  
+Date: 2026-11-11.  
+Scope: one machine, a group chat, mention-only turns, and adapter seams.
 
-## 1. 目标
+The later product is a [Kiro](https://kiro.dev) desktop app and phone app that stay linked and can be used together. That client is not this demo.
 
-做一个多 agent 协同 demo，让不同来源的 agent 接入同一块工作区，并只通过显式 `@` 互相触发。
+## 1. Goal
 
-工作区同时给人使用。人写下的一句话如果没有点名，任何 agent 都不会回复。人 `@` 某一个 agent，或某个 agent 在回复里 `@` 另一个 agent，才产生下一次调用。
+Show a shared room where people and agents talk, and an agent runs only when a message names it with `@handle`.
 
-第一版要能当场演示这条规则，并至少接入两个使用不同 API Key、不同 baseURL 的 OpenAI 兼容模型，例如 grok 和 gpt。
+A human line with no mention is stored and wakes nobody. A human `@grok`, or grok's reply containing `@gpt`, is what starts the next call.
 
-## 2. 非目标
+The demo must show that rule with at least two OpenAI-compatible endpoints that use different API keys and base URLs.
 
-第一版不做这些事：
+## 2. Out of scope for the demo
 
-- 多用户账号、权限和组织架构
-- 多房间
-- 计费后台、限流网关、一百多家模型厂商的统一适配
-- 把 MCP 服务本身注册成房间成员
-- 用大模型自动挑选下一位发言者
-- 固定剧本式的软件公司流水线
+- Accounts, permissions, and org charts
+- Billing, a rate-limit gateway, or a hundred-provider gateway
+- Registering an MCP server itself as a room member
+- Letting a model choose the next speaker
+- A fixed role-play pipeline
+- The Kiro desktop and phone clients
 
-## 3. 已定决策
+## 3. Decisions
 
-采用自建的点名房间，不把 AutoGen、AgentScope 或 LangGraph 放进运行时。那些框架的默认循环会广播消息，或在无人被点名时继续选出下一位发言者。本项目的不变量需要由房间服务直接保证。
+The room service owns the mention rule. AutoGen, AgentScope, and LangGraph are not the runtime. Their default loops broadcast a message or pick a next speaker when nobody was named.
 
-已锁定的默认值：
-
-| 决策 | 取值 |
+| Decision | Value |
 | --- | --- |
-| 交互模型 | 只有本条消息解析出的 `@handle` 进入唤醒队列 |
-| 多人点名 | 允许。点到谁，谁回复 |
-| `@all` | 不实现。出现时忽略，并记一条系统说明 |
-| 链路跳数 | 同一条人类发言带出的 agent 链路最多 4 跳 |
-| 重复点名 | 同一条消息里同一个 handle 只唤醒一次。后面的新消息可以再次点名，直到第 4 跳 |
-| 技术栈 | TypeScript：Vite + React 前端，Hono 房间服务，SQLite，SSE |
-| 第一版接入 | OpenAI 兼容 API Key |
-| 许可证 | MIT |
+| Interaction | Only `@handle` values parsed from the current message enter the wake queue |
+| Several names | Allowed. Each named agent replies |
+| `@all` | Not implemented. It is ignored and a system line is stored |
+| Hop cap | At most 4 agent hops from the human message that started the chain |
+| Repeat names | One queued wake per handle in a single message. A later message may name the same agent until hop 4 |
+| Stack | TypeScript: Vite + React, Hono, SQLite, SSE |
+| UI | A group chat, not a three-column workspace |
+| License | MIT |
 
-备选过另外两条路，不采用：
+Two other shapes were considered and not used:
 
-- 改 AutoGen Studio 或 AgentScope Studio。可视化现成，但默认语义是广播和选择下一位，和点名规则对着干。
-- 做成任务控制面，用心跳领工单。适合公司模拟，不适合 `grok` 的回复当场点名 `gpt`。
+- AutoGen Studio or AgentScope Studio. The views exist, but the default meaning is broadcast and next-speaker selection.
+- A task control plane with heartbeats. That fits a company simulation, not grok naming gpt in the same turn.
 
-## 4. 参考项目
+## 4. Reference projects
 
-2026-11-11 在 GitHub 上对照过的公开项目。星标是当天快照，只说明社区规模，不作为选型排序。
+Public GitHub projects compared on 2026-11-11. Star counts are that day's snapshot. They describe community size, not a ranking.
 
-| 项目 | 星标（快照） | 默认协作方式 | 本方案借用的部分 |
+| Project | Stars (snapshot) | Default collaboration | What this demo borrows |
 | --- | ---: | --- | --- |
-| [paperclipai/paperclip](https://github.com/paperclipai/paperclip) | 112,954 | 控制面。心跳叫醒 agent，任务单人认领。适配器包括 Claude Code、Codex、本地进程、HTTP | 控制面与执行面分离；Agent 配置卡；密钥留在服务端 |
-| [OpenHands/OpenHands](https://github.com/OpenHands/OpenHands) | 93,151 | 人把任务交给编码代理，旁边是文件、终端和浏览器 | 三栏工作区 |
-| [bytedance/deer-flow](https://github.com/bytedance/deer-flow) | 85,226 | 一个主代理加子代理，外部频道进入同一个运行时 | 入站、出站和适配器解耦的消息总线 |
-| [FoundationAgents/MetaGPT](https://github.com/FoundationAgents/MetaGPT) | 71,240 | 角色剧本和固定流程 | 角色提示词、产物交接。交互模型不采用 |
-| [BerriAI/litellm](https://github.com/BerriAI/litellm) | 63,067 | 多厂商模型网关 | 厂商变多以后再考虑替换兼容层。第一版不引入 |
-| [microsoft/autogen](https://github.com/microsoft/autogen) | 61,778 | `SelectorGroupChat` 每轮选出下一位，并向全体广播。内部有提及解析，选择器仍会在无人被点名时指定发言人 | 只借鉴提及解析要避开代码块和思考块 |
-| [crewAIInc/crewAI](https://github.com/crewAIInc/crewAI) | 60,743 | 角色编排 | 不进入运行时 |
-| [LibreChat-AI/LibreChat](https://github.com/LibreChat-AI/LibreChat) | 46,946 | 多模型聊天、密钥和预设 | 接入表单和密钥不回传前端 |
-| [agentscope-ai/agentscope](https://github.com/agentscope-ai/agentscope) | 35,750 | `MsgHub` 把回复广播给房间内所有参与者 | Studio 的运行可视化思路。广播语义不采用 |
-| [OpenBMB/ChatDev](https://github.com/OpenBMB/ChatDev) | 34,719 | 多角色软件开发对话 | 不进入运行时 |
-| [a2aproject/A2A](https://github.com/a2aproject/A2A) | 26,481 | Agent Card、`message/send`、流式和长任务 | 第三阶段的外部 agent 插座 |
-| [microsoft/magentic-ui](https://github.com/microsoft/magentic-ui) | 10,113 | 人机协同的浏览器与本地文件 | 工作区侧栏的参考 |
-| [LittleLittleCloud/Agent-ChatRoom](https://github.com/LittleLittleCloud/Agent-ChatRoom) | 84 | AutoGen 代理聊天室 | 界面隐喻接近。运行时不采用 |
+| [paperclipai/paperclip](https://github.com/paperclipai/paperclip) | 112,954 | Control plane. Heartbeats wake agents. One assignee per task. Adapters include Claude Code, Codex, a local process, and HTTP | Control plane separate from execution. Agent config stays on the server with the secret |
+| [OpenHands/OpenHands](https://github.com/OpenHands/OpenHands) | 93,151 | A person hands work to a coding agent beside files, a terminal, and a browser | Earlier workspace reference. The demo UI is now a group chat |
+| [bytedance/deer-flow](https://github.com/bytedance/deer-flow) | 85,226 | One lead agent plus sub-agents. External channels enter one runtime | Inbound and outbound traffic separated from adapters |
+| [FoundationAgents/MetaGPT](https://github.com/FoundationAgents/MetaGPT) | 71,240 | Role scripts and a fixed flow | Role prompts and file handoff. The interaction model is not used |
+| [BerriAI/litellm](https://github.com/BerriAI/litellm) | 63,067 | Multi-provider model gateway | Not used in the demo. A later gateway can replace the thin client if provider count or billing requires it |
+| [microsoft/autogen](https://github.com/microsoft/autogen) | 61,778 | `SelectorGroupChat` picks the next speaker and broadcasts. Mention parsing exists, and the selector can still pick someone when nobody was named | Mention parsing must ignore code fences and thinking blocks |
+| [crewAIInc/crewAI](https://github.com/crewAIInc/crewAI) | 60,743 | Role orchestration | Not in the runtime |
+| [LibreChat-AI/LibreChat](https://github.com/LibreChat-AI/LibreChat) | 46,946 | Multi-model chat, keys, and presets | Connect form. Secrets are not returned to the browser |
+| [agentscope-ai/agentscope](https://github.com/agentscope-ai/agentscope) | 35,750 | `MsgHub` broadcasts each reply to every participant | Run visualization idea. Broadcast is not used |
+| [OpenBMB/ChatDev](https://github.com/OpenBMB/ChatDev) | 34,719 | Multi-role software conversation | Not in the runtime |
+| [a2aproject/A2A](https://github.com/a2aproject/A2A) | 26,481 | Agent Card, `message/send`, streaming, long tasks | External agent socket |
+| [microsoft/magentic-ui](https://github.com/microsoft/magentic-ui) | 10,113 | Human and agent sharing a browser and local files | Earlier side-panel reference |
+| [LittleLittleCloud/Agent-ChatRoom](https://github.com/LittleLittleCloud/Agent-ChatRoom) | 84 | AutoGen agent chat room | Chat-room metaphor. The AutoGen runtime is not used |
 
-没有一个现成项目同时满足三件事：工作区形态、只有显式 `@` 才唤醒、以及 API Key / 进程 / HTTP / A2A 多种接入。所以房间服务自己实现。
+No single project combined a shared room, wakeups that happen only on an explicit `@`, and API key / process / HTTP / A2A joins. The room service implements that itself.
 
-## 5. 架构
+## 5. Architecture
 
-浏览器只连接房间服务。模型密钥、子进程和外部 URL 都留在服务端。
+The browser talks only to the room server. Model keys, child processes, and external URLs stay on the server.
 
 ```mermaid
 flowchart LR
-  UI["工作区 UI"]
-  Room["房间服务"]
-  Router["提及路由"]
-  Gate["回合闸门"]
-  Store["SQLite：记录、产物、密钥"]
+  UI["Group chat"]
+  Room["Room server"]
+  Router["Mention router"]
+  Gate["Turn gate"]
+  Store["SQLite: transcript, files, secrets"]
   UI --> Room
   Room --> Router
   Router --> Gate
   Gate --> Store
-  Gate --> OpenAI["OpenAI 兼容适配器"]
+  Gate --> OpenAI["OpenAI-compatible"]
   Gate --> Native["Anthropic / Gemini"]
-  Gate --> Proc["本地进程适配器"]
-  Gate --> HTTP["HTTP 代理"]
-  Gate --> A2A["A2A 适配器"]
+  Gate --> Proc["Local process"]
+  Gate --> HTTP["HTTP bot"]
+  Gate --> A2A["A2A"]
 ```
 
-一次合法唤醒的顺序：
+A valid wake:
 
 ```mermaid
 sequenceDiagram
-  participant H as 人
-  participant R as 提及路由
+  participant H as Human
+  participant R as Mention router
   participant G as grok
   participant P as gpt
-  H->>R: 做个登录页
-  R-->>H: 写入记录，唤醒队列为空
-  H->>R: @grok 先给信息架构
-  R->>G: 仅 grok 的 Turn
-  G->>R: 回复正文含 @gpt
-  R->>P: 仅 gpt 的 Turn
-  P->>R: 回复里没有新的 @
-  R-->>H: 链路结束
+  H->>R: Make a login page
+  R-->>H: Store the line. Wake queue empty
+  H->>R: @grok draft the structure
+  R->>G: Turn for grok only
+  G->>R: Reply contains @gpt
+  R->>P: Turn for gpt only
+  P->>R: Reply has no new @
+  R-->>H: Chain ends
 ```
 
-模块职责：
-
-| 模块 | 职责 |
+| Module | Job |
 | --- | --- |
-| 工作区 UI | 成员、记录、共享备忘、产物、本轮链路。输入 `@` 时弹出成员 |
-| 房间服务 | 保存消息，向前端推送 SSE，调用路由 |
-| 提及路由 | 从正文解析 handle，生成唤醒名单 |
-| 回合闸门 | 执行跳数、去重、超时和取消。失败停在该 agent |
-| 适配器 | 把一次 Turn 变成具体厂商、进程或 HTTP 调用 |
-| 存储 | 房间、agent、消息、wakeup、产物、加密后的密钥 |
+| Group chat | Members, transcript, notes, files. `@` opens the member list |
+| Room server | Store messages, push SSE, call the router |
+| Mention router | Parse handles and build the wake list |
+| Turn gate | Hop cap, duplicates, timeout, cancel. A failure stays on that agent |
+| Adapter | Turn one request into a provider, process, or HTTP call |
+| Store | Rooms, agents, messages, wakeups, artifacts, encrypted secrets |
 
-## 6. 提及协议
+## 6. Mention protocol
 
-`grok@gpt` 在本项目里的意思是：发送者是 grok，正文里点名了 `gpt`。界面上的写法是消息作者为 grok，正文包含 `@gpt`。
+`grok@gpt` means the sender is grok and the body names `gpt`. In the chat, the author is grok and the body contains `@gpt`.
 
-服务端重新解析正文，不信任前端附带的 mentions 字段。
+The server parses the body again. It does not trust a mentions field from the browser.
 
-Handle 规则：
+Handle rules:
 
-- 房间内唯一
-- 规范化为小写
-- 字符集为 `[a-z0-9_-]`，长度 2 到 32
-- `@GPT` 与 `@gpt` 指向同一个 agent
+- Unique in the room
+- Stored in lowercase
+- Charset `[a-z0-9_-]`, length 2 to 32
+- `@GPT` and `@gpt` are the same agent
 
-算作点名的，只有正文里的 `@handle`。下面这些不产生唤醒：
+Only a body `@handle` counts. These do not wake anyone:
 
-- 围栏代码块中的 `@handle`
-- `<thinking>...</thinking>` 中出现的名字
-- 未知 handle
-- 发送者点自己的 handle
+- An `@handle` inside a fenced code block
+- A name inside `<thinking>...</thinking>`
+- An unknown handle
+- The sender naming their own handle
 
-人发来的消息：
+From a person:
 
-- 零个有效 handle：保存消息，唤醒队列为空。界面记一条淡色说明：「没有点名，没有 agent 被叫醒。」
-- 一个或多个有效 handle：为每个 handle 建立一个 wakeup。
+- No valid handle: store the message and leave the wake queue empty. The chat adds a quiet line: "没有点名，没有人回复。"
+- One or more valid handles: one wakeup per handle.
 
-agent 发来的回复走同一套解析。由此形成链路。闸门规则：
+An agent reply uses the same parser, which continues the chain. Gate rules:
 
-- 跳数从触发这条链的人类消息算起，最多 4。第 4 跳之后新的 `@` 不再执行，并留下系统记录。
-- 同一条消息里重复的 handle 只建立一次排队中的唤醒。
-- 链路中后一条消息可以再次点名同一个 agent。第 4 跳仍会执行；它再点出的名字记为跳过，并留下系统记录。这是互相 `@` 时的停止条件。
-- agent 在正文里写 `@human` 时不调用模型。该消息在工作区标为「等你」。`@all` 不展开，并留下系统记录。
-- 适配器超时、401、429 或进程异常只标记在该 agent 上。房间服务不把这次失败转给其他 agent。
+- Hops count from the human message that started the chain, up to 4. A mention after hop 4 is not run, and a system line is stored.
+- A repeated handle in one message creates one queued wakeup.
+- A later message in the chain may name the same agent again. Hop 4 still runs. Mentions it adds are skipped. That stops mutual `@` loops.
+- `@human` does not call a model. The message is marked as waiting for the person. `@all` is not expanded, and a system line is stored.
+- Timeout, 401, 429, or a process error is recorded on that agent only. The room does not hand the failure to someone else.
 
-上下文：
+Context for a woken agent: the room goal, its own system prompt, the recent transcript with author names, and the message that named it. The prompt says to write `@handle` only when another member should continue. Shared history is read-only context. It does not call agents who were not named.
 
-被叫醒的 agent 收到房间目标、自己的系统提示、带作者名的最近记录，以及点名它的那条消息。提示词要求：需要别人继续时在回复里写 `@handle`；不需要就不要写 `@`。共享记录是只读上下文，不会使未被点名的 agent 被调用。
-
-## 7. 适配器
+## 7. Adapters
 
 ```ts
 interface AgentAdapter {
-  kind: "openai_compat" | "anthropic" | "gemini" | "process" | "http" | "a2a"
+  kind: "openai_compat" | "anthropic" | "gemini" | "process" | "http" | "a2a" | "echo"
   probe(): Promise<"ok" | "unauthorized" | "unreachable">
-  complete(turn: TurnRequest): AsyncIterable<TurnEvent>
+  complete(turn: TurnRequest): AsyncIterable<string>
 }
 ```
 
-`TurnRequest` 包含该 agent 的配置引用、允许它阅读的上下文、点名它的消息，以及取消信号。`TurnEvent` 至少覆盖增量文本、结束和错误。
+`TurnRequest` carries the agent config, the context that agent may read, the message that named it, and a cancel signal.
 
-| 接入 | 阶段 | 配置 | 覆盖范围 |
-| --- | --- | --- | --- |
-| OpenAI 兼容 | 第一版 | baseURL、apiKey、model、handle、系统提示 | Grok / xAI、OpenAI、DeepSeek、通义兼容接口、Ollama、vLLM、OpenRouter |
-| Anthropic | 第一版之后 | apiKey、model | Claude。消息格式与 OpenAI 兼容接口不同 |
-| Gemini | 第一版之后 | apiKey、model | Google |
-| 本地进程 | 第二阶段 | 命令、参数、工作目录 | Codex、Claude Code 等 CLI。标准输入为本轮 JSON，标准输出为回复文本 |
-| HTTP | 第二阶段 | URL、认证头 | 自建 bot。POST 上下文，响应体为 `{ "text": "..." }` |
-| A2A | 第三阶段 | Agent Card URL | 外部不透明 agent。使用发现和 `message/send` |
-| MCP | 工具，不是成员 | server URL | 挂到某一个已经接入的 agent 上 |
+| Join | Config | Coverage |
+| --- | --- | --- |
+| OpenAI-compatible | base URL, API key, model, handle, system prompt | Grok / xAI, OpenAI, DeepSeek, Qwen-compatible endpoints, Ollama, vLLM, OpenRouter |
+| Anthropic | API key, model, optional base URL | Claude |
+| Gemini | API key, model, optional base URL | Google |
+| Local process | command, arguments, working directory | CLIs such as Codex or Claude Code. Stdin is this turn's JSON. Stdout is the reply. The process is not started through a shell |
+| HTTP | URL, optional bearer token | A custom bot. POST the context. The body is `{ "text": "..." }` |
+| A2A | Agent Card URL, optional bearer token | An opaque external agent via discovery and `message/send` |
+| MCP | server URL on an existing model agent | Tools for that agent. Not a room member |
+| Echo | none | Local reply with no model call, so the mention rule can be tried without a key |
 
-保存 agent 前先调用 `probe()`。探针失败时不把该 agent 标为空闲可用。
+`probe()` runs before the agent is saved. A failed probe does not mark the agent idle and available.
 
-密钥写入 SQLite 前加密。读取接口只返回「已配置」和指纹后四位。进程环境里可以注入解密后的密钥，响应和日志里不打印密钥。
+Secrets are encrypted before they are written to SQLite. Read APIs return only "configured" and the last four characters of a fingerprint. Logs may include the handle, wakeup id, and status code. They do not include API keys, auth headers, or plaintext secrets.
 
-第一版直接请求 OpenAI 兼容的 chat completions，不引入 LiteLLM。厂商数量、计费和限流成为实际问题时，再把这一层换成 LiteLLM。
+The demo calls OpenAI-compatible chat completions directly. LiteLLM is not a dependency.
 
-## 8. 界面
+## 8. Interface
 
-三栏，按工作区而不是单栏聊天来排。
+The demo UI is a group chat.
 
-- 左栏成员：handle、厂商标记、状态（空闲、生成中、失败）。「接入」打开对应适配器表单。
-- 中栏记录：每条消息显示作者。`@handle` 渲染成名字。未被点名的发送显示淡色系统记录。只有进入唤醒队列的卡片出现流式输出。
-- 右栏：共享备忘、产物、本轮链路。备忘是全体可读的短文档。产物来自回复中显式交出的文件。链路显示谁点了谁，以及当前跳数。
-- 输入框：输入 `@` 弹出当前成员。没有 `@` 也允许发送，结果是一条工作区笔记。占位文案说明这一点。
+- Header: room switcher, new room, connect, echo pair, and member chips. A chip inserts `@handle`.
+- Transcript: each line shows its author. `@handle` is highlighted. A line that named nobody gets a quiet system note. Only a woken agent streams.
+- Notes: room goal and shared scratchpad, collapsed by default.
+- Files: a reply fence that starts with ` ```file relative/path ` is stored and shown as an open button on that message. Paths cannot contain `..`.
+- Composer: typing `@` opens the member list. Sending with no `@` is allowed and stays a note.
 
-第一版右栏先做共享备忘和本轮链路。产物栏放到第二阶段，数据模型第一版就留出位置。
+## 9. Data model
 
-## 9. 数据模型
+SQLite, one local file. Rows are scoped by `room_id`.
 
-SQLite，单机文件。第一版一张房间记录即可，表结构仍按 `room_id` 隔离，避免以后加房间时改主键。
+- `rooms`: id, name, goal, scratchpad, created_at
+- `agents`: id, room_id, handle, display_name, adapter_kind, config_json (no plaintext secret), secret_id, system_prompt, runtime_status, created_at
+- `secrets`: id, ciphertext, fingerprint
+- `messages`: id, room_id, author_kind (`human`, `agent`, or `system`), author_id, author_handle, text, wait_human, created_at
+- `wakeups`: id, room_id, chain_id, message_id, agent_id, handle, parent_wakeup_id, hop, status, reason, error, created_at, finished_at
+- `artifacts`: id, room_id, message_id, path, content, created_at
+- `settings`: active room id
 
-- `rooms`：id、name、goal、created_at
-- `agents`：id、room_id、handle、display_name、adapter_kind、config_json（不含密钥明文）、secret_id、system_prompt、created_at
-- `secrets`：id、ciphertext、fingerprint
-- `messages`：id、room_id、author_kind（human 或 agent）、author_id、text、created_at
-- `wakeups`：id、room_id、chain_id、message_id、agent_id、parent_wakeup_id、hop、status、error、created_at、finished_at
-- `artifacts`：id、room_id、message_id、path、content、created_at
+`chain_id` is the human message that started the chain.
 
-`chain_id` 指向触发这条链路的人类消息。跳数和「同一条链只叫醒一次」都按它计算。
+`status` is `queued`, `running`, `done`, `failed`, `cancelled`, or `skipped`. `skipped` covers the hop cap, a duplicate name, or a name that sat in an ignored region.
 
-`status` 取 `queued`、`running`、`done`、`failed`、`cancelled`、`skipped`。`skipped` 用于超过跳数、重复点名，或点名落在被忽略的位置。
+## 10. Errors and secrets
 
-## 10. 错误处理与安全
+- One agent request times out after 60 seconds. That wakeup is `failed`.
+- Stopping a streaming bubble aborts its `AbortSignal`. Text already produced is kept, and mentions inside a cancelled partial reply are not routed.
+- Unparseable adapter output is stored as plain text and is not scanned for `@`.
+- `.gitignore` ignores `.env`, `.data/`, and SQLite files so a local key store is not pushed.
 
-- 单个 agent 的请求超时默认 60 秒。超时后把该 wakeup 标为 `failed`，前端停在这张卡片。
-- 用户停止某张正在生成的卡片时，取消对应的 `AbortSignal`。已写出的文本保留。
-- 适配器返回无法解析的内容时，按纯文本保存，不再从这段原文里解析 `@`。
-- 日志可以记录 handle、wakeup id 和状态码，不记录 apiKey、认证头和密钥明文。
-- `.gitignore` 忽略 `.env` 和 SQLite 文件，避免把本地密钥库推进仓库。
+## 11. Demo checks
 
-## 11. 第一版验收
+Routing tests use fake adapters and do not need the network.
 
-房间里配置 `grok` 和 `gpt` 两个 OpenAI 兼容 agent，apiKey 与 baseURL 可以不同。路由测试使用假适配器，不依赖外网。
+1. Send a line with no `@`. Both agents stay idle, and the transcript contains "没有点名".
+2. Send `@grok ...`. Only grok streams.
+3. grok's reply contains `@gpt`. Only gpt starts.
+4. Send `@grok @gpt ...`. Both reply.
+5. gpt writes `@grok` inside a code fence. grok is not woken.
+6. Two fake adapters name each other. Execution stops on hop 4, with a system line.
 
-1. 发送「做个登录页」。两条 agent 都保持空闲，记录中出现「没有点名」。
-2. 发送「@grok 先给信息架构」。只有 grok 流式输出。
-3. grok 的回复正文包含 `@gpt`。只有 gpt 启动。
-4. 发送「@grok @gpt 各给一个标题」。两个都回复。
-5. gpt 在围栏代码块里写入 `@grok`。grok 不被叫醒。
-6. 让两个假适配器互相 `@`。执行停在第 4 跳，并留下系统记录。
+## 12. What the demo includes now
 
-## 12. 分期
+- Mention router and hop gate
+- Group chat and SSE
+- Rooms
+- OpenAI-compatible, Anthropic, Gemini, local process, HTTP, A2A, and echo joins
+- MCP tools attached to a model agent
+- File fences and encrypted local secrets
 
-第一版：
+These are demo implementations. They are deep enough to exercise the rule, not a finished desktop or phone client.
 
-- 一个房间，本机运行
-- 成员栏、记录、共享备忘、链路
-- OpenAI 兼容接入和 `probe()`
-- 第 6 节的路由与闸门
-- 第 11 节的验收
+## 13. After this demo
 
-第二阶段：
+Build the linked product in Kiro:
 
-- 产物栏
-- Anthropic 与 Gemini
-- 本地进程适配器
-- HTTP 适配器
+- A desktop app and a phone app
+- The same room on both, usable together without this browser demo as the client
+- The mention rule and adapter boundary stay. The chat shell in this repository does not
 
-第三阶段：
+## 14. Demo conventions
 
-- A2A Agent Card 接入
-- 按 agent 挂载 MCP 工具
-- 多房间
-
-## 13. 仓库与实现顺序
-
-文档先行。实现开始时按下面的顺序落代码，每一步都能用第 11 节里的假适配器验证，再接真实 API Key：
-
-1. 提及解析与闸门的单元测试
-2. SQLite 表和房间服务
-3. OpenAI 兼容适配器
-4. 三栏界面与 SSE
-5. 用两个真实兼容端点走通验收第 2、3、4 步
-
-## 14. 第一版实现约定
-
-- `author_kind` 增加 `system`，用来写「没有点名」「@all 不会展开」「第 4 跳」这几条说明。
-- 保留 handle：`human`、`all`、`system`、`me`。交给人的写法是 `@human`。
-- 第一版除 OpenAI 兼容接口外，有一个不调用模型的 `echo` 适配器，方便没有 API Key 时验证点名规则。
-- 共享备忘存在 `rooms.scratchpad`。
-- 房间服务默认 `127.0.0.1:8787`，界面开发服务器默认 `127.0.0.1:5173`，由 Vite 把 `/api` 代理到房间服务。
-- 密钥用本机 `.data/master.key` 做 AES-256-GCM 加密后写入 SQLite。`.data/` 不进仓库。
-- 第二阶段起支持 Anthropic、Gemini、本地进程、HTTP bot。进程不经过 shell，参数按空白和引号拆开。
-- 第三阶段支持 A2A Agent Card 的 `message/send`，以及把一个 MCP HTTP 地址挂到模型 agent 上做工具调用。
-- 回复里的 ` ```file 相对路径 ` 围栏会写入产物，路径不允许 `..`。
-- 可以新建和切换房间。点名只叫醒当前房间里的 agent。
+- Reserved handles: `human`, `all`, `system`, `me`. Hand work back to the person with `@human`.
+- The room server defaults to `127.0.0.1:8787`. The Vite dev server defaults to `127.0.0.1:5173` and proxies `/api`.
+- Secrets use AES-256-GCM with `.data/master.key`. `.data/` is not in git.
+- A local process is spawned without a shell. Arguments are split on whitespace and quotes.
+- Mentions wake agents only in the active room.
